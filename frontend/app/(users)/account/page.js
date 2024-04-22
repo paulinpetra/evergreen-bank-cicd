@@ -15,14 +15,14 @@ export default function AccountPage() {
   const fetchAccountData = async () => {
     try {
       // Get the session token from localStorage
-      const sessionToken = localStorage.getItem("sessionToken");
+      const token = localStorage.getItem("token");
 
-      const response = await fetch("http://localhost:4000/account", {
+      const response = await fetch("http://localhost:4000/accounts", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ sessionToken }),
+        body: JSON.stringify({ token }),
       });
 
       if (response.ok) {
@@ -44,9 +44,8 @@ export default function AccountPage() {
   const handleDeposite = async () => {
     // Get the session token from localStorage again
 
-    const sessionToken = localStorage.getItem("sessionToken");
+    const token = localStorage.getItem("token");
 
-    console.log("Deposit amount: ", depositAmount);
     let newAmount = currentAmount + Number(depositAmount); // Convert depositAmount to number
     setCurrentAmount(newAmount);
 
@@ -60,7 +59,7 @@ export default function AccountPage() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ sessionToken, depositAmount }),
+          body: JSON.stringify({ token, depositAmount }),
         }
       );
 

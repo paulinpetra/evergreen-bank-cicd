@@ -32,7 +32,7 @@ export default function LoginPage() {
 
         // Store the token in localStorage
         if (typeof window !== "undefined") {
-          localStorage.setItem("sessionToken", data.token);
+          localStorage.setItem("token", data.token);
         }
 
         // Redirect the user to their account page

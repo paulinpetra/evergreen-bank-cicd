@@ -1,7 +1,8 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
-import { v4 as uuidv4 } from "uuid";
+import mysql from "mysql2/promise";
+import bcrypt from "bcrypt";
 
 const app = express();
 const PORT = 4000;
@@ -10,16 +11,26 @@ const PORT = 4000;
 app.use(cors());
 app.use(bodyParser.json());
 
+// Connect to DB
+const pool = mysql.createPool({
+  host: "localhost",
+  user: "root",
+  password: "root",
+  database: "bank",
+  port: 8889,
+});
+
+// help function to make code look nicer
+async function query(sql, params) {
+  const [results] = await pool.execute(sql, params);
+  return results;
+}
+
 // Genererate One-Time Password
 function generateOTP() {
   const otp = Math.floor(100000 + Math.random() * 900000);
   return otp.toString();
 }
-
-// My arrays
-const users = [];
-const accounts = [];
-const sessions = [];
 
 // My routes:
 
@@ -27,125 +38,151 @@ app.get("/", (req, res) => {
   res.send("Welcome to the bank's backend!");
 });
 
-//Route for creating a new user on the register page - id, username, password
-app.post("/create", (req, res) => {
+//Route for creating a new user on the register page
+app.post("/users", async (req, res) => {
   // Extracting username and password from the request body
   const { username, password } = req.body;
 
-  // Generating unique IDs for the new user (that will be pushed into the users array)
-  //and account ((that will be pushed into the accounts array))
-  const userId = uuidv4();
-  const accountId = uuidv4();
+  // Encrypt the password before it ends up in the DB
+  const saltRounds = 10;
+  const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-  //new user object with the generated ID, username and password
-  const newUser = { id: userId, username, password };
-  users.push(newUser);
+  try {
+    const result = await query(
+      "INSERT INTO users (username, password) VALUES (?, ?)",
+      [username, hashedPassword]
+    );
+    //insertId from the result object that holds the unique ID assigned to the inserted user row in the database.
+    const userId = result.insertId;
 
-  //new account object with the generated ID, userId (from newUser so the account and user is linked), and initial balance of 0
-  const newAccount = { id: accountId, userId, balance: 0 }; //new account, with id, userId balance:0
-  accounts.push(newAccount);
+    //creating an account for the new user
 
-  console.log("User created:", newUser);
-  console.log("Account created:", newAccount);
+    await query("INSERT INTO accounts (userId, amount) VALUES (?, ?)", [
+      userId,
+      0, // intitial balance
+    ]);
 
-  // Sending a response back to the client with the new user's details
-  res.send("Post new user recieved: " + JSON.stringify(newUser));
+    res.status(200).json({ message: "User created!" });
+  } catch (error) {
+    res.status(500).json({ message: "Error creating user!" });
+  }
 });
 
 // Route to handle login requests
-app.post("/login", (req, res) => {
+app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  // Find the user in the users array
-  const user = users.find((user) => user.username === username);
+  // SELECT for finding matching DB-row for username
 
-  // Check if the user exists
-  if (!user) {
-    return res.status(404).json({ error: "User not found" });
+  const result = await query("SELECT * FROM users WHERE username = ?", [
+    username,
+  ]);
+
+  const user = result[0];
+
+  // 2. Check if hash in DB matches crypted password
+  const passwordMatch = await bcrypt.compare(password, user.password);
+
+  if (!passwordMatch) {
+    return res.status(401).json({ message: "Incorrect username or password" });
   }
-  // Check if the password is correct
-  if (user.password !== password) {
-    return res.status(401).json({ error: "Wrong password" });
+
+  // 3. Generate a session token
+  const token = generateOTP();
+
+  try {
+    // check if user has existing session
+    const existingSession = await query(
+      "SELECT * FROM sessions WHERE userId = ?",
+      [user.id]
+    );
+
+    if (existingSession.length === 0) {
+      // if there is no session, create new session and token
+      await query("INSERT INTO sessions (userId, token) VALUES (?, ?)", [
+        user.id,
+        token,
+      ]);
+    } else {
+      // if session exist, update token only
+      await query("UPDATE sessions SET token = ? WHERE userId = ?", [
+        token,
+        user.id,
+      ]);
+    }
+
+    res.status(200).json({ userId: user.id, token });
+  } catch (error) {
+    console.error("error handeling session");
+    res.status(500).json({ message: "error handeling session" });
   }
-  // Generating a session token
-  const sessionToken = generateOTP();
-
-  // Createing a new session object and pushing to sessions array
-  const session = {
-    userId: user.id,
-    token: sessionToken,
-  };
-  sessions.push(session);
-
-  // A successful response with the username and token
-  res.status(200).json({ username: user.username, token: sessionToken });
 });
 
 // Endpoint to fetch account data
-app.post("/account", (req, res) => {
-  const { sessionToken } = req.body;
+app.post("/accounts", async (req, res) => {
+  const { token } = req.body;
 
-  // Find the user session
-  const session = sessions.find(
-    (session) => session.sessionToken === sessionToken
-  );
-  if (!session) {
-    return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const result = await query(
+      "SELECT amount FROM accounts INNER JOIN sessions ON accounts.userId = sessions.userId WHERE token = ?",
+      [token]
+    );
+
+    if (result.length === 0) {
+      return res.status(401).json({ message: "Unvalid session" });
+    }
+
+    res.status(200).json({ balance: result[0].amount });
+  } catch (error) {
+    console.error("Error fetching balance");
+    res.status(500).json({ message: "Error fetching balance" });
   }
-
-  // Find the account associated with the user session
-  const account = accounts.find((account) => account.userId === session.userId);
-  if (!account) {
-    return res.status(404).json({ error: "Account not found" });
-  }
-  // Find the user associated with the session
-  const user = users.find((user) => user.id === session.userId);
-  if (!user) {
-    return res.status(404).json({ error: "User not found" });
-  }
-
-  // Respond with the updated account data
-  const responseData = {
-    username: user.username, // Use the username from the user object
-    balance: account.balance,
-  };
-
-  res.status(200).json(responseData);
 });
 
 // Endpoint to deposit money
-app.post("/account/transactions", (req, res) => {
-  const { sessionToken, depositAmount } = req.body;
+app.post("/account/transactions", async (req, res) => {
+  const { token, depositAmount } = req.body;
 
-  // Find the user session
-  const session = sessions.find(
-    (session) => session.sessionToken === sessionToken
-  );
-  if (!session) {
-    return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const sessionResult = await query(
+      "SELECT userId FROM sessions WHERE token = ?",
+      [token]
+    );
+
+    if (sessionResult.length === 0) {
+      return res.status(401).json({ message: "Invalid session" });
+    }
+
+    const userId = sessionResult[0].userId;
+
+    // Fetch the current amount
+    const currentAmountResult = await query(
+      "SELECT amount FROM accounts WHERE userId = ?",
+      [userId]
+    );
+    const currentAmount = currentAmountResult[0].amount;
+
+    // Calculate the new amount and round it
+    const newAmount = Math.round((currentAmount + depositAmount) * 100) / 100;
+
+    await query("UPDATE accounts SET amount = ? WHERE userId = ?", [
+      newAmount,
+      userId,
+    ]);
+
+    const newBalanceResult = await query(
+      "SELECT amount FROM accounts WHERE userId = ?",
+      [userId]
+    );
+
+    res.status(200).json({
+      message: "Money deposited!",
+      newBalance: newBalanceResult[0].amount,
+    });
+  } catch (error) {
+    console.error("Error deposting money");
+    res.status(500).json({ message: "Error depositing money" });
   }
-
-  // Find the account associated with the user session
-  const account = accounts.find((account) => account.userId === session.userId);
-  if (!account) {
-    return res.status(404).json({ error: "Account not found" });
-  }
-
-  // Convert depositAmount to number
-  const deposit = Number(depositAmount);
-  if (isNaN(deposit) || deposit <= 0) {
-    return res.status(400).json({ error: "Invalid deposit amount" });
-  }
-
-  // Update the balance
-  account.balance += deposit;
-
-  // Respond with the updated account data
-  const responseData = {
-    balance: account.balance,
-  };
-
-  res.status(200).json(responseData);
 });
 
 // Starta servern
