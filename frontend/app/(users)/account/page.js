@@ -17,7 +17,7 @@ export default function AccountPage() {
       // Get the session token from localStorage
       const token = localStorage.getItem("token");
 
-      const response = await fetch("http://localhost:4000/accounts", {
+      const response = await fetch("http://16.171.45.74:4000/accounts", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -53,7 +53,7 @@ export default function AccountPage() {
       // Send deposit request to the backend
 
       const response = await fetch(
-        "http://localhost:4000/account/transactions",
+        "http://16.171.45.74:4000/account/transactions",
         {
           method: "POST",
           headers: {

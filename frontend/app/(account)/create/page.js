@@ -16,7 +16,7 @@ export default function RegisterPage() {
     try {
       // Sending a POST request to the backend with the username and password
 
-      const response = await fetch("http://localhost:4000/users", {
+      const response = await fetch("http://16.171.45.74:4000/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
